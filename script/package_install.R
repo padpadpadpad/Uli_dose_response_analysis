@@ -4,7 +4,8 @@
 pkgs <- c('tidyr',
           'dplyr',
           'ggplot2',
-          'nlme')
+          'nlme',
+          'readxl')
 
 # install packages
 install.packages(pkgs)
