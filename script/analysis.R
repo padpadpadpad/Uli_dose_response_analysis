@@ -10,6 +10,18 @@ baranyi_dose_response <- function(LOG10N0, mumax, conc, lag){
                                                (1 - exp(-mumax * lag)) + exp(-mumax * lag)))
 }
 
+# weibull model 1 from drc
+weibull1 <- function(dose, b, c, d, e){
+  return(c+(d - c)*exp(-exp(b*(log(dose) - log(e)))))
+}
+weibull1 <- function(dose, b, c, d){
+  return(c*exp(b*(log(dose))) + d)
+}
+
+dose = 1:100
+
+plot(weibull1(dose, 2, 4))
+
 # Analysis of gentamycin ####
 # load in data
 # gentamycin
@@ -33,14 +45,14 @@ d_gent_fit <- mutate(d_gent, log_conc = log10(conc),
                      log_conc_norm = log_conc + abs(min(log_conc)))
 
 # fit global model  
-fit_gent <- gnls(fitness ~ baranyi_dose_response(LOG10N0, mumax, conc = log_conc_norm, lag),
+fit_gent <- gnls(fitness ~ weibull1(conc, b, c, d),
                   data = d_gent_fit,
-                  params = mumax + lag + LOG10N0 ~ community,
-                  start = c(0.7, 0, 1, 0, 1, 0),
+                  params = b + c + d ~ community,
+                  start = c(0.7, 0, 1, 0, 0, 0),
                   control = nls.control(maxiter = 1000))
 
 # smallest t value / largest p value is lag, take that out
-fit_gent2 <- gnls(fitness ~ baranyi_dose_response(LOG10N0, mumax, conc = log_conc_norm, lag),
+fit_gent2 <- gnls(fitness ~ weibull1(LOG10N0, mumax, conc = log_conc_norm, lag),
                  data = d_gent_fit,
                  params = c(mumax + LOG10N0 ~ community,
                             lag ~ 1),
@@ -72,13 +84,13 @@ AIC(fit_gent, fit_gent2, fit_gent3, fit_gent4)
 # or whether there is a different dose-response model you would like to fit
 
 # create predictions ####
-preds_gent <- data.frame(expand.grid(log_conc_norm = seq(min(d_gent_fit$log_conc_norm), max(d_gent_fit$log_conc_norm), length.out = 50), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
-  mutate(., pred = predict(fit_gent3, .))
+preds_gent <- data.frame(expand.grid(conc = seq(min(d_gent_fit$conc), max(d_gent_fit$conc), length.out = 1000), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
+  mutate(., pred = predict(fit_gent, .))
 
 # plot ####
 ggplot(d_gent) +
-  geom_point(aes(exp(log10(conc) + 3), fitness, group = rep, col = community)) + 
-  geom_line(aes(exp(log_conc_norm), pred, col = community), preds_gent) +
+  geom_point(aes(log10(conc), fitness, group = rep, col = community)) + 
+  geom_line(aes(log10(conc), pred, col = community), preds_gent) +
   theme_bw()
 
 # do the same with kanamycin
