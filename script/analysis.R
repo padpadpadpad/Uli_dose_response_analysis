@@ -99,13 +99,14 @@ MuMIn::AICc(fit_gent, fit_gent2, fit_gent3)
 preds_gent <- data.frame(expand.grid(conc = seq(min(d_gent$conc), max(d_gent$conc), length.out = 1000), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
   mutate(., pred = predict(fit_gent3, .))
 
-# get predictions and interval using rstan to be able to get confidence intervals around points
+# Use a bayesian method to get prediction intervals around the models
+# Will fit in rstan
+
 # add dummy variable for community, 0 or 1
 preds_gent <- mutate(preds_gent, comm_dummy = ifelse(community == 'Y', 1, 0))
 d_gent <- mutate(d_gent, comm_dummy = ifelse(community == 'Y', 1, 0))
 
-
-# create a data list for stan
+# create a data list for stan ####
 stan_data_list <- list(N = nrow(d_gent),
                        conc = d_gent$conc,
                        comm = d_gent$comm_dummy,
@@ -118,26 +119,86 @@ stan_data_list <- list(N = nrow(d_gent),
 # initial values function ####
 start <- function() list(b = 1, c = 0, d = 0, d_comm = 0, sigma = 1)
 
-# run stan model
-model_stan <- stan(file = 'script/bayesian_model.stan',
+# 1. run stan model without extensive predictions ####
+model_stan <- stan(file = 'script/bayesian_model_no_preds.stan',
                    data = stan_data_list, 
                    init = start, 
                    iter = 1e4, 
                    chains = 3)
 
-# plot ####
+# view parameter estimates
+model_stan
+# these are exactly the same as fit_gent3!!! This is good.
+
+# plot traceplot - this also looks great
+traceplot(model_stan)
+
+# 2. run model while generating predictions
+# fitting loads of predictions so that we get the value of x closest to a y of 1
+model_stan_pred <- stan(file = 'script/bayesian_model.stan',
+                   data = stan_data_list, 
+                   init = start, 
+                   iter = 1e4, 
+                   chains = 3)
+
+# extract samples, keep means and then compute mean, 95% credible intervals for new predictions
+samples <- rstan::extract(model_stan_pred)
+mu_samps <- data.frame(samples[['mu_new']]) %>%
+  gather(., 'Nnew', 'samps') %>%
+  mutate(., Nnew = as.numeric(gsub('X', '', Nnew))) %>%
+  group_by(., Nnew) %>%
+  summarise(., mu = quantile(samps, probs = 0.5),
+            lwr_CI = quantile(samps, probs = 0.025),
+            upr_CI = quantile(samps, probs = 0.975)) %>%
+  data.frame()
+sim_samps <- data.frame(samples[['sim_new']]) %>%
+  gather(., 'Nnew', 'samps') %>%
+  mutate(., Nnew = as.numeric(gsub('X', '', Nnew))) %>%
+  group_by(., Nnew) %>%
+  summarise(., lwr_PI = quantile(samps, probs = 0.025),
+            upr_PI = quantile(samps, probs = 0.975)) %>%
+  data.frame()
+
+# bind with predictions dataframe
+p_gent <- cbind(select(preds_gent, conc, community), select(mu_samps, -Nnew), select(sim_samps, -Nnew))
+
+# find the x where fitness = 1
+mu_at_fitness_1 <- mutate(p_gent, w = abs(mu - 1)) %>%
+  group_by(., community) %>%
+  top_n(., -1, w) %>%
+  select(., conc, community) %>%
+  data.frame() %>%
+  rename(., mu = conc)
+lwrCI_at_fitness_1 <- mutate(p_gent, w = abs(lwr_CI - 1)) %>%
+  group_by(., community) %>%
+  top_n(., -1, w) %>%
+  select(., conc, community) %>%
+  data.frame() %>%
+  rename(., lwr_CI = conc)
+uprCI_at_fitness_1 <- mutate(p_gent, w = abs(upr_CI - 1)) %>%
+  group_by(., community) %>%
+  top_n(., -1, w) %>%
+  select(., conc, community) %>%
+  data.frame() %>%
+  rename(., upr_CI = conc)
+x_at_fitness_1 <- merge(mu_at_fitness_1,
+                        lwrCI_at_fitness_1,
+                        by = 'community') %>%
+  merge(., uprCI_at_fitness_1, by = 'community')
+
+# plot model and predictions ####
+# on a log10 scale
 ggplot(d_gent) +
   geom_point(aes(log10(conc), fitness, group = rep, col = community)) + 
-  geom_line(aes(log10(conc), pred, col = community), preds_gent) +
+  geom_line(aes(log10(conc), mu, col = community), p_gent) +
+  geom_ribbon(aes(log10(conc), ymin = lwr_CI, ymax = upr_CI, fill = community), alpha = 0.2, p_gent) +
   theme_bw()
 
-ggplot(d_gent) +
-  geom_point(aes(conc, fitness, group = rep, col = community)) + 
-  geom_line(aes(conc, pred, col = community), preds_gent) +
+# plot the intervals of where the lwr_ci and upr_ci and mu cross 1
+ggplot(x_at_fitness_1) +
+  geom_point(aes(community, mu, col = community), size = 3) +
+  geom_errorbar(aes(community, ymin = lwr_CI, ymax = upr_CI, col = community), width = 0.1) +
   theme_bw()
-
-# want to know where the model crosses 1
-x_at_spec_y(xmin = 0, xmax = 25, model = fit_gent3, y = 1, colname_x = 'conc', fac = c('N', 'Y'), colname_fac = 'community')
 
 
 

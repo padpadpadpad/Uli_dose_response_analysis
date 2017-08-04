@@ -25,11 +25,4 @@ model{
     mu = c*exp(b*log(conc)) + d + d_comm*comm;
     fitness ~ normal(mu, sigma);
 }
-generated quantities{
-    vector[Nnew] mu_new;
-    vector[Nnew] sim_new;
-    mu_new = c*exp(b*log(conc_new)) + d + d_comm*comm_new;
-    for(i in 1:Nnew){
-        sim_new[i] = normal_rng(c*exp(b*log(conc_new[i])) + d + d_comm*comm_new[i], sigma);
-    }
-}
+
