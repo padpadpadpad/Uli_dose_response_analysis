@@ -4,23 +4,36 @@ library(dplyr)
 library(ggplot2)
 library(nlme)
 
-# make our own function
-baranyi_dose_response <- function(LOG10N0, mumax, conc, lag){
-  return(LOG10N0 + mumax * conc/log(10) + log10(exp(-mumax * conc) * 
-                                               (1 - exp(-mumax * lag)) + exp(-mumax * lag)))
-}
-
 # weibull model 1 from drc
 weibull1 <- function(dose, b, c, d, e){
   return(c+(d - c)*exp(-exp(b*(log(dose) - log(e)))))
 }
+
+# edited version with no asymptote and an intercept
 weibull1 <- function(dose, b, c, d){
   return(c*exp(b*(log(dose))) + d)
 }
 
-dose = 1:100
-
-plot(weibull1(dose, 2, 4))
+# function for working out x at a specific y
+x_at_spec_y <- function(xmin, xmax, model, y, colname_x, fac, colname_fac){
+  if(missing(colname_fac)){
+    temp = data.frame(x = seq(xmin, xmax, length.out = 100000))
+    colnames(temp) <- colname_x
+    temp$z <- predict(model, temp)
+    return(temp[which.min(abs(temp$z-y)),1])
+  }
+  if(!missing(colname_fac)){
+    temp = data.frame(expand.grid(x = seq(xmin, xmax, length.out = 100000), fac = fac, stringsAsFactors = FALSE))
+    colnames(temp) <- c(colname_x, colname_fac)
+    temp$z <- predict(model, temp)
+    temp$w <- abs(temp$z - y)
+    temp <- group_by_(temp, colname_fac) %>%
+      arrange(., w) %>%
+      top_n(., -1, w) %>%
+      data.frame()
+    return(select_(temp, colname_x, colname_fac))
+  }
+}
 
 # Analysis of gentamycin ####
 # load in data
@@ -39,44 +52,45 @@ ggplot(d_gent) +
 
 # non-linear regression - using Baranyi without lag ####
 
-# prep data - log10 the concentrations
-# normalised the concentration so that 0 is the smallest concentration (essentially added three to everything)
-d_gent_fit <- mutate(d_gent, log_conc = log10(conc),
-                     log_conc_norm = log_conc + abs(min(log_conc)))
-
 # fit global model  
 fit_gent <- gnls(fitness ~ weibull1(conc, b, c, d),
-                  data = d_gent_fit,
+                  data = d_gent,
                   params = b + c + d ~ community,
                   start = c(0.7, 0, 1, 0, 0, 0),
                   control = nls.control(maxiter = 1000))
 
-# smallest t value / largest p value is lag, take that out
-fit_gent2 <- gnls(fitness ~ weibull1(LOG10N0, mumax, conc = log_conc_norm, lag),
+# fit d_gent where the intercept is set to 0
+fit_gent2 <- gnls(fitness ~ weibull1(conc, b, c, d = 0),
                  data = d_gent_fit,
-                 params = c(mumax + LOG10N0 ~ community,
-                            lag ~ 1),
-                 start = c(0.7, 0, 1, 0, 1),
+                 params = b + c~ community,
+                 start = c(0.7, 0, 1, 0),
                  control = nls.control(maxiter = 1000))
 
-# take out mumax next
-fit_gent3 <- gnls(fitness ~ baranyi_dose_response(LOG10N0, mumax, conc = log_conc_norm, lag),
-                  data = d_gent_fit,
-                  params = c(LOG10N0 ~ community,
-                             lag + mumax ~ 1),
-                  start = c(0.7, 0, 1, 1),
+# compare models
+AIC(fit_gent,
+    fit_gent2)
+anova(fit_gent,
+      fit_gent2)
+
+# smallest t value / largest p value is lag, take that out
+fit_gent2 <- gnls(fitness ~ weibull1(conc, b, c, d),
+                  data = d_gent,
+                  params = c(b + d ~ community,
+                                c ~ 1),
+                  start = c(0.3, 0.17, 0.11, 0.9, -0.15),
                   control = nls.control(maxiter = 1000))
 
-# take out LOG10NO
-fit_gent4 <- gnls(fitness ~ baranyi_dose_response(LOG10N0, mumax, conc = log_conc_norm, lag),
-                  data = d_gent_fit,
-                  params = c(LOG10N0 + lag + mumax ~ 1),
-                  start = c(0.7, 1, 1),
+# take out mumax next
+fit_gent3 <- gnls(fitness ~ weibull1(conc, b, c, d),
+                  data = d_gent,
+                  params = c(d ~ community,
+                             b + c ~ 1),
+                  start = c(0.3, 0.11, 0.9, -0.15),
                   control = nls.control(maxiter = 1000))
 
 # do model comparison on these
-anova(fit_gent, fit_gent2, fit_gent3, fit_gent4)
-AIC(fit_gent, fit_gent2, fit_gent3, fit_gent4)
+anova(fit_gent, fit_gent2, fit_gent3)
+MuMIn::AICc(fit_gent, fit_gent2, fit_gent3)
 
 # so fit_gent3 is the best fit !!!
 
@@ -84,14 +98,25 @@ AIC(fit_gent, fit_gent2, fit_gent3, fit_gent4)
 # or whether there is a different dose-response model you would like to fit
 
 # create predictions ####
-preds_gent <- data.frame(expand.grid(conc = seq(min(d_gent_fit$conc), max(d_gent_fit$conc), length.out = 1000), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
-  mutate(., pred = predict(fit_gent, .))
+preds_gent <- data.frame(expand.grid(conc = seq(min(d_gent$conc), max(d_gent$conc), length.out = 1000), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
+  mutate(., pred = predict(fit_gent3, .))
 
 # plot ####
 ggplot(d_gent) +
   geom_point(aes(log10(conc), fitness, group = rep, col = community)) + 
   geom_line(aes(log10(conc), pred, col = community), preds_gent) +
   theme_bw()
+
+ggplot(d_gent) +
+  geom_point(aes(conc, fitness, group = rep, col = community)) + 
+  geom_line(aes(conc, pred, col = community), preds_gent) +
+  theme_bw()
+
+# want to know where the model crosses 1
+x_at_spec_y(xmin = 0, xmax = 25, model = fit_gent3, y = 1, colname_x = 'conc', fac = c('N', 'Y'), colname_fac = 'community')
+
+
+
 
 # do the same with kanamycin
 # kanamycin
