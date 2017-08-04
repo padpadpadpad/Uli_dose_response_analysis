@@ -8,7 +8,7 @@ data{
     vector[Nnew] comm_new;              // new comm values to predict from    
 }
 parameters{
-    real sigma;         // standard deviation
+    real<lower=0> sigma;         // standard deviation
     real b;             // steepness of increase
     real c;             // lower asymptote
     real d;             // intercept (shift curve up and down)
@@ -23,6 +23,7 @@ model{
     sigma ~ cauchy(0,2);
 
     mu = c*exp(b*log(conc)) + d + d_comm*comm;
+    fitness ~ normal(mu, sigma);
 }
 generated quantities{
     vector[Nnew] mu_new;

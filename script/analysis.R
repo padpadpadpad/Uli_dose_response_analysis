@@ -3,6 +3,7 @@ library(tidyr)
 library(dplyr)
 library(ggplot2)
 library(nlme)
+library(rstan)
 
 # weibull model 1 from drc
 weibull1 <- function(dose, b, c, d, e){
@@ -94,12 +95,35 @@ MuMIn::AICc(fit_gent, fit_gent2, fit_gent3)
 
 # so fit_gent3 is the best fit !!!
 
-# need to think what the best model is and what the parameters in this model mean...
-# or whether there is a different dose-response model you would like to fit
-
 # create predictions ####
 preds_gent <- data.frame(expand.grid(conc = seq(min(d_gent$conc), max(d_gent$conc), length.out = 1000), community = c('Y', 'N'), stringsAsFactors = FALSE)) %>%
   mutate(., pred = predict(fit_gent3, .))
+
+# get predictions and interval using rstan to be able to get confidence intervals around points
+# add dummy variable for community, 0 or 1
+preds_gent <- mutate(preds_gent, comm_dummy = ifelse(community == 'Y', 1, 0))
+d_gent <- mutate(d_gent, comm_dummy = ifelse(community == 'Y', 1, 0))
+
+
+# create a data list for stan
+stan_data_list <- list(N = nrow(d_gent),
+                       conc = d_gent$conc,
+                       comm = d_gent$comm_dummy,
+                       fitness = d_gent$fitness,
+                       Nnew = nrow(preds_gent),
+                       conc_new = preds_gent$conc,
+                       comm_new = preds_gent$comm_dummy
+                       )
+
+# initial values function ####
+start <- function() list(b = 1, c = 0, d = 0, d_comm = 0, sigma = 1)
+
+# run stan model
+model_stan <- stan(file = 'script/bayesian_model.stan',
+                   data = stan_data_list, 
+                   init = start, 
+                   iter = 1e4, 
+                   chains = 3)
 
 # plot ####
 ggplot(d_gent) +
