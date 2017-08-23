@@ -65,7 +65,7 @@ fit_gent <- gnls(fitness ~ weibull1(conc, b, c, d),
 
 # fit d_gent where the intercept is set to 0
 fit_gent2 <- gnls(fitness ~ weibull1(conc, b, c, d = 0),
-                 data = d_gent_fit,
+                 data = d_gent,
                  params = b + c~ community,
                  start = c(0.7, 0, 1, 0),
                  control = nls.control(maxiter = 1000))
@@ -222,7 +222,7 @@ ggplot(x_at_fitness_1) +
   ylab('gentamycin concentraton')
 
 
-# Kanomycin analysis
+# Kanomycin analysis ####
 # kanamycin
 d_kan <- readxl::read_excel('data/Competition Fitness data sheet.xlsx', range = 'A17:I29') %>%
   gather(., 'conc', 'fitness', c(2:7)) %>%
